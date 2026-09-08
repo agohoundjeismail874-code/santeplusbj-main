@@ -1,0 +1,129 @@
+services:
+  # =========================================================================
+  # 1. BASE DE DONNÉES RELATIONNELLE (PostgreSQL 16)
+  # =========================================================================
+  postgres:
+    image: postgres:16-alpine
+    container_name: santeplus-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-santeplus}
+      POSTGRES_USER: ${POSTGRES_USER:-santeplus}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backend/init-db.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - santeplus-network
+
+  # =========================================================================
+  # 1b. BASE MEDICALE DOCUMENTAIRE (MongoDB)
+  # =========================================================================
+  mongodb:
+    image: mongo:7
+    container_name: santeplus-mongodb
+    restart: unless-stopped
+    command: ["mongod", "--auth", "--bind_ip_all"]
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USERNAME:?MONGO_ROOT_USERNAME must be set in .env}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:?MONGO_ROOT_PASSWORD must be set in .env}
+    ports:
+      - "127.0.0.1:27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+      - ./backend/init-mongodb.js:/docker-entrypoint-initdb.d/init-mongodb.js:ro
+    networks:
+      - santeplus-network
+    healthcheck:
+      test: ["CMD-SHELL", "mongosh --quiet --eval \"db.adminCommand('ping').ok\" | grep 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # =========================================================================
+  # 2. BACKEND API GATEWAY (Node.js / Express / TypeScript)
+  # =========================================================================
+  api-gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: santeplus-api-gateway
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: ${DOCKER_NODE_ENV:-production}
+      PORT: 3000
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set in .env}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?JWT_REFRESH_SECRET must be set in .env}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY must be set in .env}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-santeplus}
+      POSTGRES_USER: ${POSTGRES_USER:-santeplus}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}
+      MONGODB_URI: mongodb://${MONGO_ROOT_USERNAME:?MONGO_ROOT_USERNAME must be set in .env}:${MONGO_ROOT_PASSWORD:?MONGO_ROOT_PASSWORD must be set in .env}@mongodb:27017/santeplus?authSource=admin
+      MONGODB_DB: ${MONGODB_DB:-santeplus}
+      INITIAL_ADMIN_PASSWORD: ${INITIAL_ADMIN_PASSWORD:?INITIAL_ADMIN_PASSWORD must be set in .env}
+      INITIAL_DIRECTOR_PASSWORD: ${INITIAL_DIRECTOR_PASSWORD:?INITIAL_DIRECTOR_PASSWORD must be set in .env}
+      INITIAL_DOCTOR_PASSWORD: ${INITIAL_DOCTOR_PASSWORD:?INITIAL_DOCTOR_PASSWORD must be set in .env}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173}
+      LIGHTNING_PROVIDER: ${LIGHTNING_PROVIDER:-lnbits}
+      LNBITS_URL: ${LNBITS_URL:-http://lnbits:5000}
+      LNBITS_API_KEY: ${LNBITS_API_KEY:-}
+      LIGHTNING_API_URL: ${LIGHTNING_API_URL:-}
+      LIGHTNING_API_KEY: ${LIGHTNING_API_KEY:-}
+      FIAT_PROVIDER: ${FIAT_PROVIDER:-fedapay}
+      FIAT_API_URL: ${FIAT_API_URL:-https://api.fedapay.com/v1/transactions}
+      FEDAPAY_SECRET_KEY: ${FEDAPAY_SECRET_KEY:-}
+      KKIAPAY_PRIVATE_KEY: ${KKIAPAY_PRIVATE_KEY:-}
+      IZICHANGE_API_KEY: ${IZICHANGE_API_KEY:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+    volumes:
+      - data_volume:/app/data
+    networks:
+      - santeplus-network
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/api/hospitals').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # =========================================================================
+  # 3. FRONTEND (Nginx + SPA React 19)
+  # =========================================================================
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    container_name: santeplus-frontend
+    restart: unless-stopped
+    ports:
+      - "5173:80"
+    depends_on:
+      - api-gateway
+    networks:
+      - santeplus-network
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:
+    driver: local
+  mongodb_data:
+    driver: local
+  data_volume:
+    driver: local
+
+networks:
+  santeplus-network:
+    driver: bridge
