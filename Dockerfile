@@ -1,4 +1,4 @@
-FROM node:22-alpine
+FROM node:22-bookworm-slim
 
 WORKDIR /app
 
@@ -8,7 +8,7 @@ COPY tsconfig.json ./
 COPY vite.config.ts ./
 
 # Install all dependencies (dev + prod needed for build)
-RUN npm ci --no-audit --no-fund
+RUN npm ci --no-audit --no-fund --fetch-retries=5 --fetch-retry-mintimeout=20000
 
 # Copy source code and assets
 COPY src ./src

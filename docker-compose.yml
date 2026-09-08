@@ -54,6 +54,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      network: host
     container_name: santeplus-api-gateway
     restart: unless-stopped
     ports:
@@ -107,6 +108,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.frontend
+      network: host
     container_name: santeplus-frontend
     restart: unless-stopped
     ports:
@@ -116,7 +118,7 @@ services:
     networks:
       - santeplus-network
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost/ || exit 1"]
+      test: ["CMD-SHELL", "nginx -t >/dev/null 2>&1 && test -f /usr/share/nginx/html/index.html"]
       interval: 10s
       timeout: 5s
       retries: 5
